@@ -69,40 +69,69 @@ end
 RegisterNetEvent(Config.Events.Client.BE_SPECTATOR, function(leaderId)
     RaceState.eliminated = true
 
-    local leaderVeh = nil
-    local leaderPed = nil
-    
-    -- Pega o ID do jogador (client local) com base no ID do servidor
+    if not leaderId then 
+        print("Erro: ID do líder veio nulo do servidor.")
+        return 
+    end
+
     local targetPlayer = GetPlayerFromServerId(leaderId)
     
     if targetPlayer ~= -1 then
-        leaderPed = GetPlayerPed(targetPlayer)
-        
-        -- Isso é o que realmente faz a "mágica" de carregar o veículo
-        -- se o jogador estiver muito longe de você.
+        local leaderPed = GetPlayerPed(targetPlayer)
+        -- Avisa a engine do GTA: "Comece a baixar esse jogador pela rede urgente"
         NetworkSetInSpectatorMode(true, leaderPed)
-        
-        -- Damos um pequeno delay para a engine puxar o veículo pela rede
-        Citizen.Wait(500) 
-        
-        leaderVeh = GetVehiclePedIsIn(leaderPed, false)
     end
 
-    -- Fallback se o nativo não encontrou, tenta buscar pela RaceState
-    if not leaderVeh or not DoesEntityExist(leaderVeh) then
-        for _, p in ipairs(RaceState.participants) do
-            if tostring(p.id) == tostring(leaderId) then
-                if p.netId then
-                    leaderVeh = NetToVeh(p.netId)
+    -- Cria uma thread para tentar achar o carro repetidas vezes (até 5 segundos)
+    Citizen.CreateThread(function()
+        local leaderVeh = nil
+        local leaderPed = nil
+        local attempts = 0
+
+        -- Tenta 50 vezes, a cada 100 milissegundos
+        while attempts < 50 do
+            -- Tenta achar o veículo usando a entidade do Ped (se já carregou)
+            if targetPlayer ~= -1 then
+                leaderPed = GetPlayerPed(targetPlayer)
+                local veh = GetVehiclePedIsIn(leaderPed, false)
+                if veh and DoesEntityExist(veh) then
+                    leaderVeh = veh
+                    break
                 end
-                break
             end
-        end
-    end
 
-    if leaderVeh and DoesEntityExist(leaderVeh) then
-        Spectator.Start(leaderVeh, leaderPed)
-    else
-        print("Erro: Veículo do líder não está streamado/não foi encontrado.")
-    end
+            -- Plano B: Se o Ped não carregou, tenta achar puxando pelo netId salvo na RaceState
+            if not leaderVeh then
+                for _, p in ipairs(RaceState.participants) do
+                    if tostring(p.id) == tostring(leaderId) and p.netId then
+                        local veh = NetToVeh(p.netId)
+                        if DoesEntityExist(veh) then
+                            leaderVeh = veh
+                            -- Se achou pelo netId, tenta descobrir quem é o motorista
+                            leaderPed = GetPedInVehicleSeat(veh, -1)
+                            break
+                        end
+                    end
+                end
+            end
+
+            attempts = attempts + 1
+            Citizen.Wait(100) -- Espera 0.1s antes de tentar olhar de novo
+        end
+
+        -- Fim do loop. Avalia se conseguimos pegar o carro a tempo
+        if leaderVeh and DoesEntityExist(leaderVeh) then
+            -- Se por acaso o ped não foi pego no loop, garante pegar quem tá no banco do motorista
+            if not leaderPed or not DoesEntityExist(leaderPed) then
+                leaderPed = GetPedInVehicleSeat(leaderVeh, -1)
+            end
+            
+            -- Inicia a câmera orbital!
+            Spectator.Start(leaderVeh, leaderPed)
+        else
+            print("Erro: O veículo do líder demorou mais de 5s para streamar. Câmera abortada.")
+            -- Se falhou, desliga o espectador nativo para não bugar a câmera do jogador
+            NetworkSetInSpectatorMode(false, PlayerPedId())
+        end
+    end)
 end)
