@@ -189,9 +189,13 @@ local function tick()
         end
     else -- jetski
         if (not IsEntityInWater(veh)) and submerged < CFG.EXIT_SUBMERGE then
-            if landSince == 0 then landSince = GetGameTimer() end
-            if GetGameTimer() - landSince >= CFG.LAND_DEBOUNCE_MS then
-                swapToCar(veh)
+            if IsEntityInAir(veh) then
+                landSince = 0
+            else
+                if landSince == 0 then landSince = GetGameTimer() end
+                if GetGameTimer() - landSince >= CFG.LAND_DEBOUNCE_MS then
+                    swapToCar(veh)
+                end
             end
         else
             landSince = 0
